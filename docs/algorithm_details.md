@@ -7,6 +7,7 @@
 ### 1.1 真实数据
 
 真实数据用于锚定算法在实际模组和实际 ISP 链路下的表现。建议在灯箱中覆盖典型色温和光源类型，例如 A、U30、TL84、CWF、D50、D65、D75，以及项目关注的 LED 或混合光场景。
+字段约定见 [data_schema.md](data_schema.md)，实际存储格式可以是 CSV、Parquet、JSONL 或数据库表，但主副摄同一光源和同一色块必须能稳定配对。
 
 每个光源场景下建议采集：
 
@@ -179,8 +180,25 @@ M(p_{2,j}; \Theta) - M_j
 - 训练光源列表、色卡版本、光谱数据版本和模组响应/三刺激值版本。
 - 真实数据权重、虚拟数据权重、正则参数和多项式阶数。
 - 运行时边界裁剪、矩阵条件数阈值和回退矩阵。
+- 与 [data_schema.md](data_schema.md) 对齐的数据版本和字段版本，便于复现实验和回滚模型。
 
 ## 5. 质量评估
+
+仓库内提供了一个确定性的合成仿真入口，用于验证 AWB sync、CCM sync 和 `CCM2` 求解是否形成完整闭环：
+
+```bash
+python3 scripts/run_simulation.py
+```
+
+该仿真会生成训练光源、hold-out 验证光源和 24 个色块响应，输出同步前后相对 RGB RMSE、AWB 白点误差和 `M * AWB2` 最大条件数。它不能替代真实灯箱和实景验证，但可以作为公式、代码和参数导出改动后的快速回归检查。
+
+仓库也提供了更接近真实物理链路的公开光谱数据仿真：
+
+```bash
+python3 scripts/run_spectral_simulation.py
+```
+
+该通路使用 `colour-science` 内置光谱数据，并按 `E(lambda) * rho(lambda) * S(lambda)` 积分生成虚拟相机 RGB。当前配置使用 51 个公开光源训练，保留 8 个光源做 hold-out 验证；主副摄分别使用 Nikon 5100 (NPL) 和 Sigma SDMerill (NPL) 光谱响应。该评估仍然是虚拟仿真，不包含镜头 shading、flare、IR 泄漏、真实 ISP 前处理、曝光时序和量化误差。
 
 ### 5.1 AWB Sync 评估
 

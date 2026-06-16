@@ -3,6 +3,69 @@
 本文描述一套面向多摄切换的颜色一致性算法。方案以主摄当前 AWB 和 CCM 为参考，通过 **AWB sync** 与 **CCM sync** 推导副摄 AWB 和 CCM，使主摄与副摄在切换过程中获得尽量一致的颜色表现。
 
 详细的数据构建、训练规范、验证指标和工程风险见 [algorithm_details.md](docs/algorithm_details.md)。
+训练数据字段约定见 [data_schema.md](docs/data_schema.md)。
+
+## 当前项目形态
+
+本仓库现在包含三部分内容：
+
+- 算法说明：本文和 `docs/algorithm_details.md`。
+- 数据契约：`docs/data_schema.md`，定义灰块、色卡和导出参数的字段约定。
+- 参考实现：`src/awb_ccm_sync`，覆盖 AWB 多项式映射、单光源 CCM 矩阵拟合、白点条件化 CCM sync 和运行时 `CCM2` 求解。
+
+快速验证：
+
+```bash
+python3 -m pytest
+```
+
+运行合成仿真，验证从训练到运行时求解的完整通路：
+
+```bash
+python3 scripts/run_simulation.py
+```
+
+运行公开光谱数据仿真，使用 `colour-science` 内置的光源 SPD、BabelColor ColorChecker 光谱反射率和 NPL 相机光谱响应：
+
+```bash
+python3 scripts/run_spectral_simulation.py
+```
+
+最小调用示例：
+
+```python
+import numpy as np
+
+from awb_ccm_sync import (
+    AWBSyncModel,
+    CCMSyncModel,
+    awb_matrix_from_white_point,
+    fit_local_ccm_matrix,
+    sync_runtime,
+)
+
+# main_white_points/sub_white_points: shape (n, 2), each row is (r/g, b/g).
+awb_model = AWBSyncModel.fit(main_white_points, sub_white_points, degree=2, l2=1e-6)
+
+# Per illuminant, fit a local normalized mapping M_j from 24 color patches.
+local_m = fit_local_ccm_matrix(main_patch_rgb, sub_patch_rgb, l2=1e-6)
+
+# local_matrices: shape (n_illuminants, 3, 3), aligned with sub_white_points.
+ccm_model = CCMSyncModel.fit(sub_white_points, local_matrices, degree=2, l2=1e-6)
+
+result = sync_runtime(
+    main_white_point=np.array([1.25, 0.82]),
+    main_awb=awb_matrix_from_white_point([1.25, 0.82]),
+    main_ccm=current_main_ccm,
+    awb_model=awb_model,
+    ccm_model=ccm_model,
+    cond_max=1e4,
+    regularization=1e-6,
+)
+
+awb2 = result.sub_awb
+ccm2 = result.sub_ccm
+```
 
 ## 1. 目标与核心思路
 
@@ -351,7 +414,7 @@ flowchart LR
 ## 8. 工程注意事项
 
 - `p_1` 或 `p_2` 超出训练范围时，应做边界裁剪或回退到保守标定值。
-- `M * AWB2` 条件数过大时，不应直接求逆，可使用正则化逆或回退 CCM。
+- `M * AWB2` 条件数过大时，不应直接求逆，可使用正则化逆或回退 CCM；参考实现中的 `solve_ccm2` 已提供该保护入口。
 - 切摄过程中建议对 `AWB2` 和 `CCM2` 做时间滤波，避免颜色闪烁。
 - 主摄和副摄的 AE、AWB、CCM 生效帧需要对齐，否则同步矩阵可能作用到错误帧。
 - 窄带 LED、混合光和同白点异光谱场景中，仅用白点作为条件变量可能不足。
@@ -360,3 +423,4 @@ flowchart LR
 
 - 本文：算法主线、核心公式和运行时链路。
 - [algorithm_details.md](docs/algorithm_details.md)：数据构建、训练目标、验证指标、fallback 和风险细节。
+- [data_schema.md](docs/data_schema.md)：训练输入、中间量和模型导出的字段约定。
